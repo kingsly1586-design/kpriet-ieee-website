@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meme Maker</title>
+<style>
+  :root { --bg:#fff6d6; --ink:#1d1a16; --panel:#ffffff; --accent:#ff4d6d; --line:#1d1a16; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Trebuchet MS", Verdana, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:20px; text-align:center; }
+  h1 { margin:0; font-family: Impact, "Arial Black", sans-serif; font-size:clamp(2rem,6vw,3.4rem); letter-spacing:1px; -webkit-text-stroke:2px var(--ink); color:#fff; text-shadow:4px 4px 0 var(--accent); }
+  main { max-width:1000px; margin:0 auto; padding:0 16px 40px; display:grid; gap:20px; grid-template-columns:1fr 1fr; }
+  @media (max-width:760px){ main{ grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:3px solid var(--line); border-radius:6px; padding:16px; box-shadow:5px 5px 0 var(--line); }
+  label { display:block; font-weight:bold; margin:12px 0 4px; }
+  input[type=text], input[type=file], select { width:100%; padding:9px; border:2px solid var(--line); border-radius:4px; font-size:1rem; background:#fff; }
+  input[type=range] { width:100%; }
+  .row { display:flex; gap:10px; }
+  .row > * { flex:1; }
+  button { cursor:pointer; font:inherit; font-weight:bold; padding:11px 14px; border:3px solid var(--line); border-radius:4px; background:var(--accent); color:#fff; box-shadow:3px 3px 0 var(--line); }
+  button.alt { background:#fff; color:var(--ink); }
+  button:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--line); }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid #2563eb; outline-offset:2px; }
+  .canvas-wrap { display:flex; flex-direction:column; gap:12px; align-items:center; }
+  canvas { max-width:100%; height:auto; border:3px solid var(--line); background:#ddd; cursor:grab; touch-action:none; }
+  .tip { font-size:.85rem; margin:0; text-align:center; }
+  .thumbs { display:grid; grid-template-columns:repeat(auto-fill,minmax(70px,1fr)); gap:8px; margin-top:6px; }
+  .thumbs img { width:100%; aspect-ratio:1; object-fit:cover; border:2px solid var(--line); cursor:pointer; }
+  .thumbs img:hover { border-color:var(--accent); }
+</style>
+</head>
+<body>
+<header><h1>MEME MAKER</h1></header>
+<main>
+  <section class="panel">
+    <label for="file">Upload your image</label>
+    <input type="file" id="file" accept="image/*">
+
+    <label>Or pick a sample</label>
+    <div class="thumbs" id="samples"></div>
+
+    <label for="top">Top text</label>
+    <input type="text" id="top" value="WHEN THE CODE WORKS">
+    <label for="bottom">Bottom text</label>
+    <input type="text" id="bottom" value="AND YOU DON'T KNOW WHY">
+
+    <div class="row">
+      <div><label for="size">Font size</label><input type="range" id="size" min="20" max="120" value="56"></div>
+      <div><label for="stroke">Outline</label><input type="range" id="stroke" min="0" max="14" value="7"></div>
+    </div>
+    <div class="row">
+      <div><label for="color">Text color</label><input type="text" id="color" value="#ffffff"></div>
+      <div><label for="font">Font</label>
+        <select id="font">
+          <option value="Impact, 'Arial Black', sans-serif">Impact</option>
+          <option value="'Comic Sans MS', cursive">Comic Sans</option>
+          <option value="Arial, sans-serif">Arial</option>
+          <option value="Georgia, serif">Georgia</option>
+        </select></div>
+    </div>
+  </section>
+
+  <section class="panel canvas-wrap">
+    <canvas id="meme" width="600" height="600"></canvas>
+    <p class="tip">Drag the text on the image to move it.</p>
+    <div class="row" style="width:100%">
+      <button id="download">Download meme</button>
+      <button id="reset" class="alt">Reset text position</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const canvas = document.getElementById('meme');
+const ctx = canvas.getContext('2d');
+const $ = id => document.getElementById(id);
+let img = null;
+const pos = { top: { x: .5, y: .12 }, bottom: { x: .5, y: .9 } }; // fractions of canvas
+let dragging = null;
+
+// Simple built-in sample images drawn as data URIs (no external files needed)
+function makeSample(c1, c2, emoji) {
+  const c = document.createElement('canvas'); c.width = c.height = 600;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 600, 600);
+  grad.addColorStop(0, c1); grad.addColorStop(1, c2);
+  g.fillStyle = grad; g.fillRect(0, 0, 600, 600);
+  g.font = '300px serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(emoji, 300, 310);
+  return c.toDataURL();
+}
+const samples = [
+  makeSample('#ffd166', '#ef476f', '😂'),
+  makeSample('#118ab2', '#06d6a0', '😎'),
+  makeSample('#8338ec', '#ff006e', '🤔'),
+  makeSample('#fb8500', '#023047', '😱')
+];
+samples.forEach(src => {
+  const t = document.createElement('img'); t.src = src; t.alt = 'Sample background';
+  t.onclick = () => loadSrc(src);
+  $('samples').appendChild(t);
+});
+
+function loadSrc(src) {
+  const i = new Image();
+  i.onload = () => { img = i; draw(); };
+  i.src = src;
+}
+
+$('file').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  loadSrc(URL.createObjectURL(f));
+});
+
+function drawText(text, p) {
+  const size = +$('size').value;
+  ctx.font = `${size}px ${$('font').value}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = +$('stroke').value;
+  ctx.strokeStyle = '#000';
+  ctx.fillStyle = $('color').value;
+  const maxW = canvas.width * 0.94;
+  // word wrap
+  const words = text.toUpperCase().split(' ');
+  const lines = []; let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; }
+    else line = test;
+  }
+  lines.push(line);
+  const lh = size * 1.1;
+  const startY = p.y * canvas.height - ((lines.length - 1) * lh) / 2;
+  lines.forEach((l, k) => {
+    const y = startY + k * lh;
+    if (ctx.lineWidth > 0) ctx.strokeText(l, p.x * canvas.width, y);
+    ctx.fillText(l, p.x * canvas.width, y);
+  });
+}
+
+function draw() {
+  if (img) {
+    // size canvas to the image, max 700px wide
+    const scale = Math.min(1, 700 / img.width);
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#666'; ctx.font = '24px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Upload an image or pick a sample', canvas.width / 2, canvas.height / 2);
+  }
+  drawText($('top').value, pos.top);
+  drawText($('bottom').value, pos.bottom);
+}
+
+['top', 'bottom', 'size', 'stroke', 'color', 'font'].forEach(id => $(id).addEventListener('input', draw));
+
+// Dragging text
+function pointer(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+}
+canvas.addEventListener('pointerdown', e => {
+  const p = pointer(e);
+  const dTop = Math.abs(p.y - pos.top.y), dBot = Math.abs(p.y - pos.bottom.y);
+  dragging = dTop < dBot ? 'top' : 'bottom';
+  canvas.setPointerCapture(e.pointerId);
+  canvas.style.cursor = 'grabbing';
+});
+canvas.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const p = pointer(e);
+  pos[dragging].x = Math.min(1, Math.max(0, p.x));
+  pos[dragging].y = Math.min(1, Math.max(0, p.y));
+  draw();
+});
+canvas.addEventListener('pointerup', () => { dragging = null; canvas.style.cursor = 'grab'; });
+
+$('reset').onclick = () => {
+  pos.top = { x: .5, y: .12 }; pos.bottom = { x: .5, y: .9 }; draw();
+};
+
+$('download').onclick = () => {
+  const a = document.createElement('a');
+  a.download = 'my-meme.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+};
+
+loadSrc(samples[0]);
+</script>
+</body>
+</html>
